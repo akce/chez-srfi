@@ -15,31 +15,12 @@
 ;;; TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 ;;; PERFORMANCE OF THIS SOFTWARE.
 
-(import (chezscheme))
+(import
+  (chezscheme)
+  (private translate-name))
 
 ;;; Link all of the SRFIs to their normal directories like sane 
 ;;; people who use Chez Scheme prefer. :-)
-
-(define (translate-name name)
-  (let f ([i 0] [j 0])
-    (if (fx= i (string-length name))
-        (make-string j)
-        (let ([c (string-ref name i)])
-          (cond
-            [(and (char=? c #\%)
-                  (let ([next-i (fx+ i 3)])
-                    (and (fx<= next-i (string-length name)) next-i))) =>
-             (lambda (next-i)
-               (let ([translated-name (f next-i (fx+ j 1))])
-                 (string-set! translated-name j
-                   (integer->char
-                     (string->number
-                       (substring name (fx+ i 1) next-i) 16)))
-                 translated-name))]
-            [else
-             (let ([translated-name (f (fx+ i 1) (fx+ j 1))])
-               (string-set! translated-name j c)
-               translated-name)])))))
 
 (define (link-files!)
   (let file-loop ([ls (directory-list (current-directory))])
