@@ -1,6 +1,6 @@
 #! /bin/sh
 #|
-exec /usr/bin/env ${SCHEME:-scheme} --script "$0" "$@"
+exec /usr/bin/env ${SCHEME:-scheme} --debug-on-exception --script "$0" "$@"
 |#
 ;; Installs versions of srfi libs where calls to (include/resolve ...) have been inlined with requested scheme code.
 ;; These inlined libs are written to a separate install directory and compiled by Chez scheme.
@@ -13,251 +13,49 @@ exec /usr/bin/env ${SCHEME:-scheme} --script "$0" "$@"
 ;; The SRFI library will be installed under <dest-dir>. ie, <dest-dir>/srfi/...
 ;; <dest-dir> will be created if it does not exist.
 ;;
-;; Written by Akce 2020, released into the public domain.
 ;; SPDX-License-Identifier: Unlicense
 
 (import
   (chezscheme)
-  (private install sipp)
-  (private translate-name))
+  (private translate-name)
+  (private install))
 
-(define srfi-name?
-  (lambda (f)
-    (char=? #\% (string-ref f 0))))
+(define usage
+  (lambda ()
+    (format #t "Usage:
+  $ ~a <mode> [mode-args ...]
 
-(define copy-file
-  (lambda (src dest)
-    (let ([inp (open-file-input-port src)]
-          [outp (open-file-output-port dest)])
-      (put-bytevector outp (get-bytevector-all inp))
-      (for-each close-port `(,inp ,outp)))))
+where <mode> is one of:
 
-(define copy-directory
-  (lambda (src dest)
-    (let ([src-files
-            (filter
-              file-regular?
-              (map
-                (lambda (f)
-                  (join-path src f))
-                (directory-list src)))])
-      (unless (file-exists? dest)
-        (mkdir dest))
-      (mkdir (join-path dest src))
-      (for-each
-        (lambda (s)
-          (copy-file s (join-path dest s)))
-        src-files))))
+  links
 
-(define join-path
-  (lambda parts
-    (apply join-string directory-separator-string parts)))
+  source <destination-dir>
 
-(define get-sub-dirs
-  (lambda (dir)
-    (define join-dir
-      (lambda (subdir)
-        (join-path dir subdir)))
-    (let ([subdirs (filter file-directory? (map join-dir (directory-list dir)))])
-    (apply
-      append
-      subdirs
-      (filter pair? (map get-sub-dirs subdirs))))))
+      Where <destination-dir> is in the Chez scheme library search path, (library-directories).
+      The SRFIs will be installed beneath <destination-dir>. ie, <destination-dir>/srfi
+      The <destination-dir>/srfi directory must not exist.
 
-(define collect-library-dirs
-  (case-lambda
-    [(base-dir)
-     (let ([subdirs (filter
-                      (lambda (f)
-                        (and (file-directory? f) (srfi-name? f)))
-                      (directory-list base-dir))])
-       (apply
-         append
-         subdirs
-         (filter pair? (map get-sub-dirs subdirs))))]))
-
-(define try-create-dir
-  (lambda (dir)
-    (unless (file-directory? dir)
-      (mkdir dir))))
-
-(define create-dirs
-  (lambda (dirs)
-    (for-each try-create-dir dirs)))
-
-(define scheme-library-file?
-  (lambda (f)
-    (let ([ext (path-extension f)])
-      (and
-        (file-regular? f)
-        (not (file-symbolic-link? f))
-        (string=? ext "sls")))))
-
-(define scheme-program-file?
-  (lambda (f)
-    (let ([ext (path-extension f)])
-      (and
-        (file-regular? f)
-        (not (file-symbolic-link? f))
-        (string=? ext "sps")))))
-
-;; [proc] directory-list/with-path: list directory contents with leading path.
-(define directory-list/with-path
-  (lambda (dir)
-    (define returner
-      (cond
-        [(string=? "." dir)
-         ;; do not return paths with ./ prefix as this becomes a problem case for the import script that
-         ;; 'compile-all' needs to generate.
-         values]
-        [else
-          (lambda (f)
-            (join-path dir f))]))
-    (map		; list directory contents.
-      returner
-      (directory-list dir))))
-
-(define collect-library-files
-  (lambda (library-dirs)
-    (apply		        ; flatten lists.
-      append
-      (filter		        ; remove empty dirs.
-        pair?
-        (map		        ; only get real *scheme* files.
-          (lambda (d)
-            (filter scheme-library-file? (directory-list/with-path d)))
-          library-dirs)))))
-
-(define install-file
-  (lambda (src dest)
-    (with-output-to-file dest
-      (lambda ()
-        (for-each pretty-print (replace-source src #t))))))
-
-(define install-srfi
-  (lambda (src-dir dest-dir)
-    (define srfi-dest-dir (join-path dest-dir "srfi"))
-    (define join-dest-dir
-      (lambda (f)
-        (join-path srfi-dest-dir f)))
-    (when (file-exists? srfi-dest-dir)
-      (error #f "SRFI destination directory exists. Please remove before running again." srfi-dest-dir))
-    (let* ([src-dirs (collect-library-dirs src-dir)]
-           [src-files (collect-library-files (cons src-dir src-dirs))]
-           [prefix-dirs
-             (map
-               join-dest-dir
-               (map translate-name src-dirs))]
-           [prefix-files
-             (map
-               join-dest-dir
-               (map translate-name src-files))])
-      (create-dirs (apply list dest-dir srfi-dest-dir prefix-dirs))
-      (for-each install-file src-files prefix-files)
-      (values srfi-dest-dir src-files))))
-
-(define path->srfi-include
-  (lambda (p)
-    (define /->space
-      (lambda (str)
-        (list->string
-          (map (lambda (c)
-                 (case c
-                   [(#\/)
-                    #\space]
-                   [else
-                     c]))
-          (string->list str)))))
-    (define filename->srfi
-      (lambda (str)
-        (string-append "(srfi " (/->space (translate-name str)) ")")))
-    (let* ([fn (path-root p)]
-           [ext (path-extension fn)])
-      ;; Check for second level extension. These can exist for scheme specific implementations.
-      ;; We'll include both generic and Chez versions.
-      (cond
-        [(string=? "" ext)
-         (filename->srfi fn)]
-        [(string=? "chezscheme" ext)
-         (filename->srfi (path-root fn))]
-        [else
-          ;; Do not include specific implementations for other schemes.
-          #f]))))
-
-;; compile-all generates an import scheme script that compiles all imported libraries in place.
-;; Doing it this way lets Chez scheme handle dependancies correctly and compile libs only once.
-(define compile-all
-  (lambda (dest-dir src-files)
-    (let ([fn "./compile-all.chezscheme.sps"])
-      (with-output-to-file
-        fn
-        (lambda ()
-          (format #t "#! /bin/sh
-#|
-exec /usr/bin/env ${SCHEME:-scheme} --compile-imported-libraries --script \"$0\" \"$@\"
-|#
-
-;; DO NOT EDIT!!
-;; This file was autogenerated by: $ ~a.
-
-(import (chezscheme))
-(library-directories \"~a\")
-
-(import
-~a
-)
-" (apply join-string " " (command-line)) dest-dir (apply join-string
-              "\n"
-              (filter values (map path->srfi-include src-files)))))
-        '(replace mode #o755))
-      (system fn))))
-
-(define install-private
-  (lambda (src-dir dest-dir)
-    (copy-directory (join-path src-dir "private") dest-dir)
-    ;; create a null (srfi private include) library since those imports haven't been removed.
-    (delete-file (join-path dest-dir "private" "include.sls"))
-    (call-with-output-file (join-path dest-dir "private" "include.chezscheme.sls")
-      (lambda (p)
-        (pretty-print '(library (srfi private include)
-                         (export)
-                         (import (chezscheme)))
-                      p)))))
-
-(define install-tests
-  (lambda (src-dir dest-dir)
-    (let ([src-files (filter scheme-program-file? (directory-list/with-path (join-path src-dir "tests")))]
-          [dest-test-dir (join-path dest-dir "tests")])
-      (try-create-dir dest-test-dir)
-      (for-each
-        install-file
-        src-files
-        (map
-          (lambda (src)
-            ;; Don't translate-name here. That way tests/test_all.sh works for both installed and linked SRFIs.
-            (join-path dest-dir src))
-          src-files))
-      (copy-file (join-path src-dir "tests" "test_all.sh") (join-path dest-test-dir "test_all.sh")))))
-
-(define main
-  (lambda (src-dir dest-dir)
-    (let-values ([(srfi-dest-dir lib-files) (install-srfi src-dir dest-dir)])
-      (install-private src-dir srfi-dest-dir)
-      (install-tests src-dir srfi-dest-dir)
-      (library-directories dest-dir)
-      (compile-all dest-dir lib-files))))
-
-(cond
-  [(null? (cdr (command-line)))
-   (format #t "Usage:
-  $ ~a <destination-dir>
-
-  Where <destination-dir> is in the Chez scheme library search path, (library-directories).
-  The SRFIs will be installed beneath <destination-dir>. ie, <destination-dir>/srfi
-  The <destination-dir>/srfi directory must not exist.
+  compile
 
 " (car (command-line)))
-(exit 1)]
+    (exit 1)))
+
+(define arg=? string=?)
+
+(let ([argv (cdr (command-line))])
+  (cond
+    [(null? argv)
+     (usage)]
+    [(arg=? (car argv) "links")
+     ;; create softlinks with decoded percent-encoded filenames.
+     (link-files!)]
+    [(arg=? (car argv) "source")
+     ;; install source files to location
+     (install-source! "." (cadr argv))]
+    [(arg=? (car argv) "compile")
+     ;; compile source at location
+     (compile-source! (cadr argv) "./compile-all.chezscheme.sps")]
    [else
-     (main "." (list-ref (command-line) 1))])
+     (usage)]))
+
 ;; vi:ft=scheme:

@@ -15,8 +15,11 @@
 ;;; PERFORMANCE OF THIS SOFTWARE.
 
 (library (private translate-name)
-  (export translate-name)
-  (import (chezscheme))
+  (export
+    link-files!
+    translate-name)
+  (import
+    (chezscheme))
 
   (define (translate-name name)
     (let f ([i 0] [j 0])
@@ -38,4 +41,17 @@
               (let ([translated-name (f (fx+ i 1) (fx+ j 1))])
                 (string-set! translated-name j c)
                 translated-name)])))))
+
+  (define (link-files!)
+    (let file-loop ([ls (directory-list (current-directory))])
+      (unless (null? ls)
+        (let ([name (car ls)])
+          (let ([translated-name (translate-name name)])
+            (unless (or (string=? name translated-name)
+                        (file-exists? translated-name))
+              (system (format "ln -sf '~a' '~a'" name translated-name)))
+            (when (file-directory? translated-name)
+              (parameterize ([current-directory translated-name])
+                (link-files!)))
+            (file-loop (cdr ls)))))))
   )

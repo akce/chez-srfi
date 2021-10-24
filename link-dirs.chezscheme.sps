@@ -22,17 +22,4 @@
 ;;; Link all of the SRFIs to their normal directories like sane 
 ;;; people who use Chez Scheme prefer. :-)
 
-(define (link-files!)
-  (let file-loop ([ls (directory-list (current-directory))])
-    (unless (null? ls)
-      (let ([name (car ls)])
-        (let ([translated-name (translate-name name)])
-          (unless (or (string=? name translated-name)
-                      (file-exists? translated-name))
-            (system (format "ln -sf '~a' '~a'" name translated-name)))
-          (when (file-directory? translated-name)
-            (parameterize ([current-directory translated-name])
-              (link-files!)))
-          (file-loop (cdr ls)))))))
-
 (link-files!)
