@@ -54,7 +54,7 @@ where <mode> is one of:
      (install-source! "." (cadr argv))]
     [(arg=? (car argv) "compile")
      ;; compile source at location
-     (compile-source! (cadr argv) "./compile-all.chezscheme.sps")]
+     (compile-source! (cadr argv))]
    [else
      (usage)]))
 
